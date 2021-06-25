@@ -1,0 +1,38 @@
+version: "3.9"
+services:
+  minio-server:
+    container_name: minio-server
+    image: minio/minio
+    restart: always
+    ports:
+      - "9000:9000"
+    environment:
+      MINIO_ROOT_USER: "${AWS_ACCESS_KEY_ID}"
+      MINIO_ROOT_PASSWORD: "${AWS_SECRET_ACCESS_KEY}"
+      # MINIO_KMS_SECRET_KEY_FILE: $MINIO_KMS_SECRET_KEY
+    command: ["server", "/data"]
+    volumes:
+      - "miniodata:/data"
+
+  minio-client:
+    container_name: minio-client
+    image: minio/mc
+    depends_on:
+      - minio-server
+    environment:
+      MINIO_ROOT_USER: "${AWS_ACCESS_KEY_ID}"
+      MINIO_ROOT_PASSWORD: "${AWS_SECRET_ACCESS_KEY}"
+    entrypoint: ["/bin/sh","-c"]
+    command:
+    - |
+      sleep 2
+      mc alias set minio http://minio-server:9000 ${AWS_ACCESS_KEY_ID} ${AWS_SECRET_ACCESS_KEY}
+      mc admin info minio
+      mc mb minio/fs-bucket
+      mc policy set public minio/fs-bucket
+      mc ls minio
+      mc tree minio/fs-bucket
+      mc stat minio/fs-bucket
+
+volumes:
+  miniodata:

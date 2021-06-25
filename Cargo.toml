@@ -1,0 +1,17 @@
+[package]
+name = "archivur"
+version = "0.1.0"
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+actix-web = "3"
+tokio = { version = "1", features = ["full"] }
+s3 = { git = "https://github.com/awslabs/aws-sdk-rust", tag = "v0.0.9-alpha", package = "aws-sdk-s3" }
+smithy_http = { git = "https://github.com/awslabs/aws-sdk-rust", tag = "v0.0.9-alpha", package = "smithy-http" }
+aws_auth = { git = "https://github.com/awslabs/aws-sdk-rust", tag = "v0.0.9-alpha", package = "aws-auth" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+log = "0.4.14"
+env_logger = "0.8.4"
