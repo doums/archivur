@@ -1,4 +1,4 @@
-use actix_web::{web, HttpResponse};
+use actix_web::{error, web, HttpResponse, Result};
 use serde::Deserialize;
 
 use crate::AppState;
@@ -8,15 +8,18 @@ struct Payload {
     files: Vec<String>,
 }
 
-async fn handler(data: web::Data<AppState>, payload: web::Json<Payload>) -> HttpResponse {
-    println!("data -> {:#?}", data.0);
-    let mut i = data.0.lock().unwrap();
-    *i += 1;
-    println!("data -> {:#?}", data.0);
-    for file in &payload.files {
-        println!("the value is: {}", file);
+async fn handler(data: web::Data<AppState>, payload: web::Json<Payload>) -> Result<HttpResponse> {
+    let resp = data
+        .s3
+        .list_buckets()
+        .send()
+        .await
+        .map_err(error::ErrorInternalServerError)?;
+
+    for bucket in resp.buckets.unwrap_or_default() {
+        println!("bucket: {:?}", bucket.name)
     }
-    HttpResponse::Ok().body("OK")
+    Ok(HttpResponse::Ok().body("OK"))
 }
 
 pub fn config(cfg: &mut web::ServiceConfig) {

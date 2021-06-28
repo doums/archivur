@@ -11,7 +11,6 @@ use smithy_http::endpoint::Endpoint;
 use std::env::set_var;
 use std::error::Error;
 use std::sync::mpsc;
-use std::sync::Mutex;
 use std::thread;
 
 use crate::service_config::config;
@@ -23,7 +22,15 @@ const AWS_ACCESS_KEY_ID: &str = "minio";
 const AWS_SECRET_ACCESS_KEY: &str = "minio123";
 
 #[derive(Debug)]
-struct AppState(Mutex<i32>);
+struct AppState {
+    s3: s3::Client,
+}
+
+impl AppState {
+    fn new(client: s3::Client) -> Self {
+        AppState { s3: client }
+    }
+}
 
 struct CredentialsProvider;
 
@@ -37,11 +44,10 @@ impl ProvideCredentials for CredentialsProvider {
     }
 }
 
-#[tokio::main]
+#[actix_web::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     set_var("RUST_LOG", "debug,actix_web=debug");
     env_logger::init();
-    let app_state = web::Data::new(AppState(Mutex::new(0)));
     let region = Region::new("eu-west-3");
     let s3_config = Config::builder()
         .region(region)
@@ -49,17 +55,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .credentials_provider(CredentialsProvider)
         .build();
     let client = s3::Client::from_conf(s3_config);
-    let resp = client.list_buckets().send().await?;
-
-    for bucket in resp.buckets.unwrap_or_default() {
-        println!("bucket: {:?}", bucket.name)
-    }
+    let app_state = web::Data::new(AppState::new(client));
 
     let (tx, rx) = mpsc::channel();
 
     thread::spawn(move || {
-        let sys = System::new("archivur");
-
+        let sys = System::new();
         let srv = HttpServer::new(move || {
             App::new()
                 .wrap(Logger::new("%r -> [%s] took %Tms"))
