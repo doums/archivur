@@ -61,17 +61,20 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     thread::spawn(move || {
         let sys = System::new();
-        let srv = HttpServer::new(move || {
-            App::new()
-                .wrap(Logger::new("%r -> [%s] took %Tms"))
-                .app_data(app_state.clone())
-                .configure(config)
-        })
-        .bind(format!("{}:{}", HOST, PORT))?
-        .shutdown_timeout(5)
-        .run();
+        sys.block_on(async {
+            let srv = HttpServer::new(move || {
+                App::new()
+                    .wrap(Logger::new("%r -> [%s] took %Tms"))
+                    .app_data(app_state.clone())
+                    .configure(config)
+            })
+            .bind(format!("{}:{}", HOST, PORT))
+            .unwrap()
+            .shutdown_timeout(5)
+            .run();
 
-        let _ = tx.send(srv);
+            let _ = tx.send(srv);
+        });
         info!("🦀 archivur running on port {} 🦀", PORT);
         sys.run()
     });

@@ -1,5 +1,6 @@
 use actix_web::{error, web, HttpResponse, Result};
 use serde::Deserialize;
+use log::debug;
 
 use crate::AppState;
 
@@ -17,7 +18,7 @@ async fn handler(data: web::Data<AppState>, payload: web::Json<Payload>) -> Resu
         .map_err(error::ErrorInternalServerError)?;
 
     for bucket in resp.buckets.unwrap_or_default() {
-        println!("bucket: {:?}", bucket.name)
+        debug!("bucket: {:?}", bucket.name)
     }
     Ok(HttpResponse::Ok().body("OK"))
 }
