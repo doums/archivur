@@ -20,7 +20,7 @@ async fn handler(
 ) -> Result<HttpResponse> {
     let raw_path = "archive/test.zip";
     let path = Path::new(&raw_path);
-    let file = File::create(&path).unwrap();
+    let file = File::create(&path)?;
 
     let mut zip = zip::ZipWriter::new(file);
     let options = FileOptions::default()
@@ -41,37 +41,34 @@ async fn handler(
                 .bucket(bucket_name)
                 .key(&cloned_key)
                 .send()
-                .await
-                .map_err(|err| {
-                    error!("s3 get_object with key [{}]: {}", cloned_key, err);
-                    if let SdkError::ServiceError { err, raw: _ } = err {
-                        if let GetObjectErrorKind::NoSuchKey(_) = err.kind {
-                            return error::ErrorBadRequest(format!("no such key [{}]", cloned_key));
-                        };
-                        return error::ErrorInternalServerError(err);
-                    }
-                    error::ErrorInternalServerError(err)
-                })
-                .unwrap();
+                .await;
             warn!("send key -> {}", cloned_key);
             cloned_tx.send((cloned_key, object)).await;
         });
     }
 
     drop(tx);
-    while let Some((key, mut object)) = rx.recv().await {
+    while let Some((key, object_output)) = rx.recv().await {
         warn!("recieved key -> {}", key);
-        zip.start_file(key, options)
-            .map_err(error::ErrorInternalServerError)
-            .unwrap();
+        zip.start_file(&key, options)
+            .map_err(error::ErrorInternalServerError)?;
+        let mut object = object_output.map_err(|err| {
+            error!("s3 get_object with key [{}]: {}", key, err);
+            if let SdkError::ServiceError { err, raw: _ } = err {
+                if let GetObjectErrorKind::NoSuchKey(_) = err.kind {
+                    return error::ErrorBadRequest(format!("no such key [{}]", key));
+                };
+                return error::ErrorInternalServerError(err);
+            }
+            error::ErrorInternalServerError(err)
+        })?;
         while let Some(bytes) = object
             .body
             .try_next()
             .await
-            .map_err(error::ErrorInternalServerError)
-            .unwrap()
+            .map_err(error::ErrorInternalServerError)?
         {
-            zip.write_all(&bytes).unwrap();
+            zip.write_all(&bytes)?;
         }
     }
 
