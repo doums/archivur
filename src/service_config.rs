@@ -2,9 +2,10 @@ use std::{fs::File, io::Write, path::Path};
 
 use crate::AppState;
 use actix_web::{error, web, HttpResponse, Result};
-use log::{debug, error};
+use log::{debug, error, info, warn};
 use s3::{error::GetObjectErrorKind, SdkError};
 use serde::Deserialize;
+use tokio::sync::mpsc;
 use tokio_stream::StreamExt;
 use zip::write::FileOptions;
 
@@ -26,36 +27,54 @@ async fn handler(
         .compression_method(zip::CompressionMethod::Bzip2)
         .unix_permissions(0o755);
 
+    let (tx, mut rx) = mpsc::channel(32);
+
     for key in payload.keys.iter() {
-        let mut obj = state
-            .s3
-            .get_object()
-            .bucket(state.bucket)
-            .key(key)
-            .send()
-            .await
-            .map_err(|err| {
-                error!("s3 get_object with key [{}]: {}", key, err);
-                if let SdkError::ServiceError { err, raw: _ } = err {
-                    if let GetObjectErrorKind::NoSuchKey(_) = err.kind {
-                        return error::ErrorBadRequest(format!("no such key [{}]", key));
-                    };
-                    return error::ErrorInternalServerError(err);
-                }
-                error::ErrorInternalServerError(err)
-            })?;
-        debug!("obj -> {:#?}", obj);
+        let s3 = state.s3.clone();
+        let bucket_name = String::from(state.bucket);
+        let cloned_key = key.clone();
+        let cloned_tx = tx.clone();
+
+        tokio::spawn(async move {
+            let object = s3
+                .get_object()
+                .bucket(bucket_name)
+                .key(&cloned_key)
+                .send()
+                .await
+                .map_err(|err| {
+                    error!("s3 get_object with key [{}]: {}", cloned_key, err);
+                    if let SdkError::ServiceError { err, raw: _ } = err {
+                        if let GetObjectErrorKind::NoSuchKey(_) = err.kind {
+                            return error::ErrorBadRequest(format!("no such key [{}]", cloned_key));
+                        };
+                        return error::ErrorInternalServerError(err);
+                    }
+                    error::ErrorInternalServerError(err)
+                })
+                .unwrap();
+            warn!("send key -> {}", cloned_key);
+            cloned_tx.send((cloned_key, object)).await;
+        });
+    }
+
+    drop(tx);
+    while let Some((key, mut object)) = rx.recv().await {
+        warn!("recieved key -> {}", key);
         zip.start_file(key, options)
-            .map_err(error::ErrorInternalServerError)?;
-        while let Some(bytes) = obj
+            .map_err(error::ErrorInternalServerError)
+            .unwrap();
+        while let Some(bytes) = object
             .body
             .try_next()
             .await
-            .map_err(error::ErrorInternalServerError)?
+            .map_err(error::ErrorInternalServerError)
+            .unwrap()
         {
-            zip.write_all(&bytes)?;
+            zip.write_all(&bytes).unwrap();
         }
     }
+
     zip.finish().map_err(error::ErrorInternalServerError)?;
     Ok(HttpResponse::Ok().body("OK"))
 }
