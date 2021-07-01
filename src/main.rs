@@ -20,15 +20,17 @@ const PORT: u32 = 4000;
 const S3_HOST: &str = "http://localhost:9000";
 const AWS_ACCESS_KEY_ID: &str = "minio";
 const AWS_SECRET_ACCESS_KEY: &str = "minio123";
+const S3_BUCKET: &str = "fs-bucket";
 
 #[derive(Debug)]
-struct AppState {
+struct AppState<'a> {
     s3: s3::Client,
+    bucket: &'a str,
 }
 
-impl AppState {
-    fn new(client: s3::Client) -> Self {
-        AppState { s3: client }
+impl<'a> AppState<'a> {
+    fn new(client: s3::Client, bucket: &'a str) -> Self {
+        AppState { s3: client, bucket }
     }
 }
 
@@ -48,6 +50,7 @@ impl ProvideCredentials for CredentialsProvider {
 async fn main() -> Result<(), Box<dyn Error>> {
     set_var("RUST_LOG", "debug,actix_web=debug");
     env_logger::init();
+
     let region = Region::new("eu-west-3");
     let s3_config = Config::builder()
         .region(region)
@@ -55,8 +58,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .credentials_provider(CredentialsProvider)
         .build();
     let client = s3::Client::from_conf(s3_config);
-    let app_state = web::Data::new(AppState::new(client));
 
+    let app_state = web::Data::new(AppState::new(client, S3_BUCKET));
     let (tx, rx) = mpsc::channel();
 
     thread::spawn(move || {
