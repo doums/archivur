@@ -28,11 +28,13 @@ services:
       sleep 2
       mc alias set minio http://minio-server:9000 ${AWS_ACCESS_KEY_ID} ${AWS_SECRET_ACCESS_KEY}
       mc admin info minio
-      mc mb minio/fs-bucket
-      mc policy set public minio/fs-bucket
+      mc mb minio/files
+      mc mb minio/archives
+      mc policy set public minio/files
+      mc policy set public minio/archives
       mc ls minio
-      mc tree minio/fs-bucket
-      mc stat minio/fs-bucket
+      mc tree minio
+      mc stat minio
 
 volumes:
   miniodata:

@@ -3,8 +3,7 @@ use actix_web::http::Uri;
 use actix_web::middleware::Logger;
 use actix_web::{rt::System, web, App, HttpServer};
 use aws_auth::Credentials;
-use aws_auth::CredentialsError;
-use aws_auth::ProvideCredentials;
+use aws_auth::provider::{CredentialsError, ProvideCredentials};
 use log::info;
 use s3::{Config, Region};
 use smithy_http::endpoint::Endpoint;
@@ -20,17 +19,23 @@ const PORT: u32 = 4000;
 const S3_HOST: &str = "http://localhost:9000";
 const AWS_ACCESS_KEY_ID: &str = "minio";
 const AWS_SECRET_ACCESS_KEY: &str = "minio123";
-const S3_BUCKET: &str = "fs-bucket";
+const S3_BUCKET_FILES: &str = "files";
+const S3_BUCKET_ARCHIVES: &str = "archives";
 
 #[derive(Debug)]
 struct AppState<'a> {
     s3: s3::Client,
-    bucket: &'a str,
+    files_bucket: &'a str,
+    archives_bucket: &'a str,
 }
 
 impl<'a> AppState<'a> {
-    fn new(client: s3::Client, bucket: &'a str) -> Self {
-        AppState { s3: client, bucket }
+    fn new(client: s3::Client, files_bucket: &'a str, archives_bucket: &'a str) -> Self {
+        AppState {
+            s3: client,
+            files_bucket,
+            archives_bucket,
+        }
     }
 }
 
@@ -48,7 +53,7 @@ impl ProvideCredentials for CredentialsProvider {
 
 #[actix_web::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    set_var("RUST_LOG", "debug,actix_web=debug");
+    set_var("RUST_LOG", "error,archivur=debug");
     env_logger::init();
 
     let region = Region::new("eu-west-3");
@@ -59,7 +64,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .build();
     let client = s3::Client::from_conf(s3_config);
 
-    let app_state = web::Data::new(AppState::new(client, S3_BUCKET));
+    let app_state = web::Data::new(AppState::new(client, S3_BUCKET_FILES, S3_BUCKET_ARCHIVES));
     let (tx, rx) = mpsc::channel();
 
     thread::spawn(move || {
