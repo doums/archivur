@@ -4,7 +4,7 @@ use crate::AppState;
 use actix_web::{error, web, HttpResponse, Result};
 use log::{debug, error};
 use s3::{
-    error::{GetObjectErrorKind, UploadPartErrorKind},
+    error::GetObjectErrorKind,
     model::{CompletedMultipartUpload, CompletedPart},
     ByteStream, SdkError,
 };
@@ -13,7 +13,7 @@ use tokio::sync::mpsc;
 use tokio_stream::StreamExt;
 use zip::write::FileOptions;
 
-const PART_UPLOAD_SIZE: usize = 32_768;
+const PART_SIZE: usize = 6_000_000; // min 5 MB, max 5 GB -> see https://docs.aws.amazon.com/AmazonS3/latest/userguide/qfacts.html
 
 #[derive(Deserialize)]
 struct Payload {
@@ -77,9 +77,15 @@ async fn handler(
 
     let mut zip = zip.finish().map_err(error::ErrorInternalServerError)?;
     zip.set_position(0);
-    // TODO: check if the file is < 100 Mb, if yes, don't use multipart_upload
+    debug!("zip archive len [{}]", zip.get_ref().len());
+    /* TODO:
+    check if the zip is < ~100 MB, if yes, don't use multipart_upload
+    check if the zip is > 5 TB (max object size)
+    check if zip_len / PART_SIZE > 10_000 (max number of parts), if yes use a bigger part size
 
-    let mut buffer: [u8; PART_UPLOAD_SIZE] = [0; PART_UPLOAD_SIZE];
+    source: https://docs.aws.amazon.com/AmazonS3/latest/userguide/qfacts.html */
+
+    let mut buffer: Vec<u8> = vec![0; PART_SIZE];
     let multipart_upload = state
         .s3
         .create_multipart_upload()
@@ -97,14 +103,14 @@ async fn handler(
     let (tx, mut rx) = mpsc::channel(32);
     loop {
         part_number += 1;
-        let n = zip.read(&mut buffer)?;
-        debug!("{}", n);
+        let n = zip.read(&mut buffer[..PART_SIZE])?;
         if n == 0 {
             break;
         }
+        debug!("readed {} bytes", n);
         let s3 = state.s3.clone();
         let archives_bucket = state.archives_bucket.to_string();
-        let bytes = Vec::from(buffer);
+        let bytes = Vec::from(&buffer[..n]);
         let cloned_upload_id = upload_id.clone();
         let cloned_tx = tx.clone();
 
@@ -125,7 +131,10 @@ async fn handler(
                 .await
             {
                 Ok(output) => {
-                    debug!("completed upload part [{}]", part_number,);
+                    debug!(
+                        "completed upload part [{}]\netag {:#?}",
+                        part_number, &output.e_tag
+                    );
                     cloned_tx
                         .send(
                             CompletedPart::builder()
@@ -136,6 +145,7 @@ async fn handler(
                         .await;
                 }
                 Err(err) => {
+                    // TODO: implement a retry logic
                     error!("request [UploadPart]: {}", err);
                 }
             }
@@ -167,6 +177,7 @@ async fn handler(
             error!("s3 request failed [CompleteMultipartUpload]: {}", err);
             error::ErrorInternalServerError("s3 error")
         })?;
+
     Ok(HttpResponse::Ok().body("OK"))
 }
 
