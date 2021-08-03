@@ -2,7 +2,7 @@ use std::io::{Cursor, Read, Write};
 
 use crate::AppState;
 use actix_web::{error, web, HttpResponse, Result};
-use log::{debug, error};
+use log::{debug, error, info};
 use s3::{
     error::GetObjectErrorKind,
     model::{CompletedMultipartUpload, CompletedPart},
@@ -12,6 +12,8 @@ use serde::Deserialize;
 use tokio::sync::mpsc;
 use tokio_stream::StreamExt;
 use zip::write::FileOptions;
+
+use std::time::Instant;
 
 const PART_SIZE: usize = 6_000_000; // min 5 MB, max 5 GB -> see https://docs.aws.amazon.com/AmazonS3/latest/userguide/qfacts.html
 
@@ -24,10 +26,16 @@ async fn handler(
     state: web::Data<AppState<'_>>,
     payload: web::Json<Payload>,
 ) -> Result<HttpResponse> {
+    let iteration_start: Instant;
+
+    iteration_start = Instant::now();
     let cursor: Cursor<Vec<u8>> = Cursor::new(vec![]);
     let mut zip = zip::ZipWriter::new(cursor);
     let options = FileOptions::default()
-        .compression_method(zip::CompressionMethod::Bzip2)
+        /* TODO
+        set archive compression ? `.compression_method(zip::CompressionMethod::Bzip2)`
+        set the large_file opion if zip file will be more than 4 GB.
+        see https://docs.rs/zip/0.5.13/zip/write/struct.FileOptions.html#method.large_file */
         .unix_permissions(0o755);
 
     let (tx, mut rx) = mpsc::channel(32);
@@ -78,6 +86,7 @@ async fn handler(
     let mut zip = zip.finish().map_err(error::ErrorInternalServerError)?;
     zip.set_position(0);
     debug!("zip archive len [{}]", zip.get_ref().len());
+    info!("zip took {}", iteration_start.elapsed().as_millis());
     /* TODO:
     check if the zip is < ~100 MB, if yes, don't use multipart_upload
     check if the zip is > 5 TB (max object size)
@@ -132,7 +141,7 @@ async fn handler(
             {
                 Ok(output) => {
                     debug!(
-                        "completed upload part [{}]\netag {:#?}",
+                        "completed upload part [{}], etag {:#?}",
                         part_number, &output.e_tag
                     );
                     cloned_tx
@@ -178,7 +187,8 @@ async fn handler(
             error::ErrorInternalServerError("s3 error")
         })?;
 
-    Ok(HttpResponse::Ok().body("OK"))
+    info!("elapsed {}", iteration_start.elapsed().as_millis());
+    Ok(HttpResponse::Ok().body("result.zip"))
 }
 
 pub fn config(cfg: &mut web::ServiceConfig) {
